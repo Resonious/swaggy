@@ -9,7 +9,8 @@ RSpec.describe Swaggy do
     expect(Swaggy::Rack.hello).to eq "Hello from the C extension!"
   end
 
-  it "does something useful" do
-    expect(false).to eq(true)
+  it "loads an openapi JSON document" do
+    rack = Swaggy::Rack.new("./test_openapi.json")
+    expect(rack).to be_a Swaggy::Rack
   end
 end
