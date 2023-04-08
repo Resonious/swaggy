@@ -81,6 +81,23 @@ paths:
       responses:
         '204':
           description: Customer deleted
+  /customers/{customer_id}/stuff:
+    get:
+      summary: Retrieve a customer
+      operationId: get_customer
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A single customer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
   /subscriptions:
     get:
       summary: List all subscriptions

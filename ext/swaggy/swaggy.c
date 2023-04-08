@@ -1,4 +1,5 @@
 #include "ruby.h"
+#include "json.h"
 #include <assert.h>
 #include <unistd.h>
 #include <errno.h>
@@ -15,6 +16,9 @@ typedef struct mmapped_file_st {
 static void file_unmap_memory(mmapped_file_t *file);
 
 typedef struct swaggy_rack_st {
+    // Holding onto static strings
+    VALUE sPATH_INFO;
+
     VALUE openapi_path;
     mmapped_file_t openapi_file;
 } swaggy_rack_t;
@@ -27,6 +31,7 @@ typedef struct swaggy_rack_st {
 
 static void swaggy_rack_mark(void *data) {
     swaggy_rack_t *trace = (swaggy_rack_t*)data;
+    rb_gc_mark(trace->sPATH_INFO);
     rb_gc_mark(trace->openapi_path);
 }
 
@@ -64,6 +69,7 @@ static VALUE swaggy_rack_allocate(VALUE klass) {
     swaggy_rack_t *swaggy_rack;
     VALUE result = TypedData_Make_Struct(klass, swaggy_rack_t, &swaggy_rack_type, swaggy_rack);
 
+    swaggy_rack->sPATH_INFO = rb_str_new2("PATH_INFO");
     swaggy_rack->openapi_path = Qnil;
 
     return result;
@@ -136,6 +142,110 @@ static VALUE swaggy_rack_init(VALUE self, VALUE openapi_path) {
 }
 
 static VALUE swaggy_rack_call(VALUE self, VALUE env) {
+    swaggy_rack_t *swaggy_rack = RTYPEDDATA_DATA(self);
+
+    // Path from request
+    VALUE path = rb_hash_aref(env, swaggy_rack->sPATH_INFO);
+    const char *path_ptr = RSTRING_PTR(path);
+    size_t path_len = RSTRING_LEN(path);
+
+    for (size_t i = 0; i < path_len; i++) {
+        putc(path_ptr[i], stdout);
+    }
+    putc('\n', stdout);
+
+    // Method from request
+    VALUE method = rb_hash_aref(env, rb_str_new2("REQUEST_METHOD"));
+    const char *method_ptr = RSTRING_PTR(method);
+    size_t method_len = RSTRING_LEN(method);
+
+    // Ruby hash to hold path parameters
+    VALUE path_params = rb_hash_new();
+
+    // OK let's dig into the openapi doc
+    const char *openapi_doc = swaggy_rack->openapi_file.data;
+    struct json paths = json_get(openapi_doc, "paths");
+
+    // If while looping through paths we find the path we're looking for, we'll
+    // populate this bad boy.
+    struct json found_openapi_path_spec = json_parse("null");
+
+    // Looping through all the openapi doc paths
+    for (struct json key = json_first(paths); json_exists(key); key = json_next(key)) {
+        found_openapi_path_spec = json_next(key);
+
+        const char *key_ptr = json_raw(key);
+        size_t key_len = json_raw_length(key);
+
+        // Skip the starting "
+        const char *api_path_ptr = key_ptr + 1;
+        // Ignore the trailing "
+        size_t api_path_len = key_len - 2;
+
+        size_t api_path_i = 0;
+        size_t req_path_i = 0;
+        while (api_path_i < api_path_len && req_path_i < path_len) {
+            if (api_path_ptr[api_path_i] == '{') {
+                // We've found a path parameter
+                size_t param_start = api_path_i + 1;
+                size_t param_end = param_start;
+                while (api_path_ptr[param_end] != '}') {
+                    param_end++;
+                }
+
+                // Add the path parameter to the hash
+                // NOTE: this is a bit wasteful. If there are many paths with similar path
+                // parameters, we'll be adding those to the hash and then blowing it up each
+                // time.
+                size_t param_len = param_end - param_start;
+                const char *param_name = api_path_ptr + param_start;
+
+                size_t param_value_end = req_path_i;
+                while (param_value_end < path_len && path_ptr[param_value_end] != '/') {
+                    param_value_end++;
+                }
+                size_t param_value_len = param_value_end - req_path_i;
+                const char *param_value = path_ptr + req_path_i;
+
+                rb_hash_aset(
+                    path_params,
+                    rb_str_new_frozen(rb_str_new_static(param_name, param_len)),
+                    rb_str_new(param_value, param_value_len)
+                );
+
+                api_path_i = param_end + 1;
+                req_path_i = param_value_end;
+            } else if (api_path_ptr[api_path_i] == path_ptr[req_path_i]) {
+                api_path_i++;
+                req_path_i++;
+            } else {
+                found_openapi_path_spec = json_parse("null");
+                goto done;
+            }
+        }
+        if (api_path_i == api_path_len && req_path_i == path_len) {
+            goto done;
+        }
+
+        rb_hash_clear(path_params);
+        key = found_openapi_path_spec;
+    }
+done:
+    if (json_type(found_openapi_path_spec) == JSON_NULL) {
+        VALUE status = INT2NUM(404);
+        VALUE headers = rb_hash_new();
+        VALUE body = rb_ary_new();
+        VALUE result = rb_ary_new();
+
+        rb_ary_push(body, rb_str_new2("Path not found man"));
+
+        rb_ary_push(result, status);
+        rb_ary_push(result, headers);
+        rb_ary_push(result, body);
+
+        return result;
+    }
+
     // return [200, {}, ["Hello World"]]
     VALUE status = INT2NUM(200);
     VALUE headers = rb_hash_new();
