@@ -177,6 +177,11 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
         const char *key_ptr = json_raw(key);
         size_t key_len = json_raw_length(key);
 
+        // We'll use this to keep track of whether we've seen a path parameters.
+        // This is to facilitate blowing up the path_params hash each iteration,
+        // which might just be bad in the first place but oh well.
+        bool path_param_added = false;
+
         // Skip the starting "
         const char *api_path_ptr = key_ptr + 1;
         // Ignore the trailing "
@@ -187,6 +192,7 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
         while (api_path_i < api_path_len && req_path_i < path_len) {
             if (api_path_ptr[api_path_i] == '{') {
                 // We've found a path parameter
+                path_param_added = true;
                 size_t param_start = api_path_i + 1;
                 size_t param_end = param_start;
                 while (api_path_ptr[param_end] != '}') {
@@ -227,7 +233,7 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
             goto done;
         }
 
-        rb_hash_clear(path_params);
+        if (path_param_added) rb_hash_clear(path_params);
         key = found_openapi_path_spec;
     }
 done:
