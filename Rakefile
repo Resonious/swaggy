@@ -9,4 +9,12 @@ require "rubocop/rake_task"
 
 RuboCop::RakeTask.new
 
+require 'rake/extensiontask'
+
+task build: :compile
+
+Rake::ExtensionTask.new('swaggy') do |ext|
+  ext.lib_dir = 'lib'
+end
+
 task default: %i[spec rubocop]
