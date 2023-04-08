@@ -135,12 +135,29 @@ static VALUE swaggy_rack_init(VALUE self, VALUE openapi_path) {
     return Qnil;
 }
 
+static VALUE swaggy_rack_call(VALUE self, VALUE env) {
+    // return [200, {}, ["Hello World"]]
+    VALUE status = INT2NUM(200);
+    VALUE headers = rb_hash_new();
+    VALUE body = rb_ary_new();
+    VALUE result = rb_ary_new();
+
+    rb_ary_push(body, rb_str_new2("Hello World"));
+
+    rb_ary_push(result, status);
+    rb_ary_push(result, headers);
+    rb_ary_push(result, body);
+
+    return result;
+}
+
 void Init_swaggy() {
     VALUE mSwaggy = rb_define_module("Swaggy");
     VALUE cSwaggyRack = rb_define_class_under(mSwaggy, "Rack", rb_cObject);
     rb_define_alloc_func(cSwaggyRack, swaggy_rack_allocate);
 
     rb_define_method(cSwaggyRack, "initialize", swaggy_rack_init, 1);
+    rb_define_method(cSwaggyRack, "call", swaggy_rack_call, 1);
     rb_define_singleton_method(cSwaggyRack, "hello", swaggy_rack_hello, 0);
 }
 
