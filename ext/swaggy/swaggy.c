@@ -165,13 +165,21 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
     // OK let's dig into the openapi doc
     const char *openapi_doc = swaggy_rack->openapi_file.data;
     struct fy_document *fyd = fy_document_build_from_string(NULL, openapi_doc, swaggy_rack->openapi_file.len);
-    struct fy_node *paths = fy_node_mapping_lookup_value_by_simple_key(fy_document_root(fyd), "paths", 5);
+
+    struct fy_node *paths = fy_node_by_path(
+        fy_document_root(fyd),
+        "/paths", 6,
+        FYNWF_FOLLOW
+    );
+    if (fy_node_get_type(paths) != FYNT_MAPPING) {
+        rb_raise(rb_eRuntimeError, "Expected paths to be an object");
+    }
 
     // If while looping through paths we find the path we're looking for, we'll
     // populate this bad boy.
     struct fy_node *found_openapi_path_spec = NULL;
 
-    void *iter;
+    void *iter = NULL;
     struct fy_node_pair *path_node_pair;
     struct fy_node *path_node;
 
@@ -192,10 +200,8 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
         // which might just be bad in the first place but oh well.
         bool path_param_added = false;
 
-        // Skip the starting "
-        const char *api_path_ptr = key_ptr + 1;
-        // Ignore the trailing "
-        size_t api_path_len = key_len - 2;
+        const char *api_path_ptr = key_ptr;
+        size_t api_path_len = key_len;
 
         size_t api_path_i = 0;
         size_t req_path_i = 0;

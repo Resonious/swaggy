@@ -10,7 +10,18 @@ RSpec.describe Swaggy do
   end
 
   it "loads an openapi JSON document" do
-    rack = Swaggy::Rack.new("./test_openapi.json")
+    rack = Swaggy::Rack.new("./test_openapi.yaml")
     expect(rack).to be_a Swaggy::Rack
+
+    env = {
+      "REQUEST_METHOD" => "GET",
+      "PATH_INFO" => "/customers/123/stuff",
+      "QUERY_STRING" => "",
+    }
+    expect(rack.call(env)).to eq [
+      200,
+      {},
+      ["Hello World"],
+    ]
   end
 end
