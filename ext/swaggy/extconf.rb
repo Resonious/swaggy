@@ -10,7 +10,7 @@ end
 
 if !File.exist?(File.join(libfyaml_source, 'build/lib/libfyaml.a'))
   puts "Building libfyaml from source"
-  `mkdir -p "#{File.expand_path(libfyaml_source, 'build')}"`
+  `mkdir -p "#{File.join(libfyaml_source, 'build')}"`
 
   puts "Bootstrapping libfyaml..."
   `cd #{libfyaml_source} && ./bootstrap.sh`
