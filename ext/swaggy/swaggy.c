@@ -216,7 +216,9 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
         size_t api_path_i = 0;
         size_t req_path_i = 0;
         while (api_path_i < api_path_len && req_path_i < path_len) {
-            if (api_path_ptr[api_path_i] == '{') {
+            if (req_path_i > 0 && path_ptr[req_path_i] == '/' && path_ptr[req_path_i - 1] == '/') {
+                req_path_i++;
+            } else if (api_path_ptr[api_path_i] == '{') {
                 // We've found a path parameter
                 path_param_added = true;
                 size_t param_start = api_path_i + 1;
@@ -254,6 +256,9 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
                 found_openapi_path_spec = NULL;
                 goto done;
             }
+        }
+        while (path_ptr[req_path_i] == '/') {
+            req_path_i++;
         }
         if (api_path_i == api_path_len && req_path_i == path_len) {
             goto done;
