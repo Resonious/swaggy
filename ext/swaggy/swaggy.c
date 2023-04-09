@@ -1,5 +1,5 @@
 #include "ruby.h"
-#include "json.h"
+#include "libfyaml.h"
 #include <assert.h>
 #include <unistd.h>
 #include <errno.h>
@@ -164,18 +164,28 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
 
     // OK let's dig into the openapi doc
     const char *openapi_doc = swaggy_rack->openapi_file.data;
-    struct json paths = json_get(openapi_doc, "paths");
+    struct fy_document *fyd = fy_document_build_from_string(NULL, openapi_doc, swaggy_rack->openapi_file.len);
+    struct fy_node *paths = fy_node_mapping_lookup_value_by_simple_key(fy_document_root(fyd), "paths", 5);
 
     // If while looping through paths we find the path we're looking for, we'll
     // populate this bad boy.
-    struct json found_openapi_path_spec = json_parse("null");
+    struct fy_node *found_openapi_path_spec = NULL;
+
+    void *iter;
+    struct fy_node_pair *path_node_pair;
+    struct fy_node *path_node;
+
+    path_node_pair = fy_node_mapping_iterate(paths, &iter);
 
     // Looping through all the openapi doc paths
-    for (struct json key = json_first(paths); json_exists(key); key = json_next(key)) {
-        found_openapi_path_spec = json_next(key);
+    while (path_node_pair != NULL) {
+        path_node = fy_node_pair_key(path_node_pair);
+        found_openapi_path_spec = fy_node_pair_value(path_node_pair);
 
-        const char *key_ptr = json_raw(key);
-        size_t key_len = json_raw_length(key);
+        const char *key_ptr;
+        size_t key_len;
+        key_ptr = fy_node_get_scalar(path_node, &key_len);
+        if (key_ptr == NULL) { rb_raise(rb_eRuntimeError, "Failed to get scalar from fy_node"); }
 
         // We'll use this to keep track of whether we've seen a path parameters.
         // This is to facilitate blowing up the path_params hash each iteration,
@@ -225,7 +235,7 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
                 api_path_i++;
                 req_path_i++;
             } else {
-                found_openapi_path_spec = json_parse("null");
+                found_openapi_path_spec = NULL;
                 goto done;
             }
         }
@@ -234,10 +244,10 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
         }
 
         if (path_param_added) rb_hash_clear(path_params);
-        key = found_openapi_path_spec;
+        path_node_pair = fy_node_mapping_iterate(paths, &iter);
     }
 done:
-    if (json_type(found_openapi_path_spec) == JSON_NULL) {
+    if (found_openapi_path_spec == NULL) {
         VALUE status = INT2NUM(404);
         VALUE headers = rb_hash_new();
         VALUE body = rb_ary_new();

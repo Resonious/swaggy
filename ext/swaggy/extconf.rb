@@ -8,7 +8,7 @@ if !File.exist?(libfyaml_source)
   `curl -L #{libfyaml_upstream} | tar xz -C #{File.dirname(libfyaml_source)}`
 end
 
-if !File.exist?(File.expand_path(libfyaml_source, 'build/lib/libfyaml.a'))
+if !File.exist?(File.join(libfyaml_source, 'build/lib/libfyaml.a'))
   puts "Building libfyaml from source"
   `mkdir -p "#{File.expand_path(libfyaml_source, 'build')}"`
 
@@ -16,13 +16,10 @@ if !File.exist?(File.expand_path(libfyaml_source, 'build/lib/libfyaml.a'))
   `cd #{libfyaml_source} && ./bootstrap.sh`
 
   puts "Configuring libfyaml..."
-  `cd #{libfyaml_source} && ./configure "--prefix=#{libfyaml_source}/build"`
+  `cd #{libfyaml_source} && ./configure "--prefix=#{libfyaml_source}/build" --enable-static --disable-shared CFLAGS="-fPIC"`
 
   puts "Building libfyaml..."
   `cd #{libfyaml_source} && make install`
-
-  puts "Forcing static link by removing libfyaml.so..."
-  `rm #{libfyaml_source}/build/lib/libfyaml.so*`
 end
 
 $CFLAGS << " -I#{libfyaml_source}/build/include"
