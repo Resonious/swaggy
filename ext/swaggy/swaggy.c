@@ -21,6 +21,7 @@ typedef struct swaggy_rack_st {
 
     VALUE openapi_path;
     mmapped_file_t openapi_file;
+    struct fy_document *yaml_document;
 } swaggy_rack_t;
 
 /*
@@ -38,6 +39,9 @@ static void swaggy_rack_mark(void *data) {
 static void swaggy_rack_free(void *data) {
     swaggy_rack_t *swaggy_rack = (swaggy_rack_t*)data;
 
+    if (swaggy_rack->yaml_document) {
+        fy_document_destroy(swaggy_rack->yaml_document);
+    }
     if (swaggy_rack->openapi_file.data) {
         file_unmap_memory(&swaggy_rack->openapi_file);
     }
@@ -71,6 +75,7 @@ static VALUE swaggy_rack_allocate(VALUE klass) {
 
     swaggy_rack->sPATH_INFO = rb_str_new2("PATH_INFO");
     swaggy_rack->openapi_path = Qnil;
+    swaggy_rack->yaml_document = NULL;
 
     return result;
 }
@@ -138,6 +143,12 @@ static VALUE swaggy_rack_init(VALUE self, VALUE openapi_path) {
     }
     file_map_memory(&swaggy_rack->openapi_file);
 
+    swaggy_rack->yaml_document = fy_document_build_from_string(
+        NULL,
+        swaggy_rack->openapi_file.data,
+        swaggy_rack->openapi_file.len
+    );
+
     return Qnil;
 }
 
@@ -164,10 +175,9 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
 
     // OK let's dig into the openapi doc
     const char *openapi_doc = swaggy_rack->openapi_file.data;
-    struct fy_document *fyd = fy_document_build_from_string(NULL, openapi_doc, swaggy_rack->openapi_file.len);
 
     struct fy_node *paths = fy_node_by_path(
-        fy_document_root(fyd),
+        fy_document_root(swaggy_rack->yaml_document),
         "/paths", 6,
         FYNWF_FOLLOW
     );
