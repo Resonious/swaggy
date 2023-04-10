@@ -18,10 +18,10 @@ RSpec.describe Swaggy do
       "PATH_INFO" => "/customers/123/stuff",
       "QUERY_STRING" => "",
     }
-    expect(rack.call(env)).to eq [
+    expect(rack.call(env)).to match [
       200,
       {},
-      ["Hello World"],
+      ["Retrieve a customer"],
     ]
   end
 
@@ -34,10 +34,26 @@ RSpec.describe Swaggy do
       "PATH_INFO" => "//customers///123//stuff",
       "QUERY_STRING" => "",
     }
-    expect(rack.call(env)).to eq [
+    expect(rack.call(env)).to match [
       200,
       {},
-      ["Hello World"],
+      ["Retrieve a customer"],
+    ]
+  end
+
+  it "matches on method" do
+    rack = Swaggy::Rack.new("./test_openapi.yaml")
+    expect(rack).to be_a Swaggy::Rack
+
+    env = {
+      "REQUEST_METHOD" => "POST",
+      "PATH_INFO" => "/customers/123/stuff",
+      "QUERY_STRING" => "",
+    }
+    expect(rack.call(env)).to match [
+      404,
+      anything,
+      anything
     ]
   end
 end

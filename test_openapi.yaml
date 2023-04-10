@@ -203,7 +203,7 @@ components:
           readOnly: true
         customer_id:
           type: string
-        plan_name:
+        plan:
           type: string
         start_date:
           type: string

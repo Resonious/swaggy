@@ -1,9 +1,10 @@
 #include "ruby.h"
 #include "libfyaml.h"
-#include <assert.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/mman.h>
+
+#define assert RUBY_ASSERT
 
 typedef struct mmapped_file_st {
     /* file handle, should be r+ */
@@ -16,9 +17,6 @@ typedef struct mmapped_file_st {
 static void file_unmap_memory(mmapped_file_t *file);
 
 typedef struct swaggy_rack_st {
-    // Holding onto static strings
-    VALUE sPATH_INFO;
-
     VALUE openapi_path;
     mmapped_file_t openapi_file;
     struct fy_document *yaml_document;
@@ -32,7 +30,6 @@ typedef struct swaggy_rack_st {
 
 static void swaggy_rack_mark(void *data) {
     swaggy_rack_t *trace = (swaggy_rack_t*)data;
-    rb_gc_mark(trace->sPATH_INFO);
     rb_gc_mark(trace->openapi_path);
 }
 
@@ -73,7 +70,6 @@ static VALUE swaggy_rack_allocate(VALUE klass) {
     swaggy_rack_t *swaggy_rack;
     VALUE result = TypedData_Make_Struct(klass, swaggy_rack_t, &swaggy_rack_type, swaggy_rack);
 
-    swaggy_rack->sPATH_INFO = rb_str_new2("PATH_INFO");
     swaggy_rack->openapi_path = Qnil;
     swaggy_rack->yaml_document = NULL;
 
@@ -156,26 +152,25 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
     swaggy_rack_t *swaggy_rack = RTYPEDDATA_DATA(self);
 
     // Path from request
-    VALUE path = rb_hash_aref(env, swaggy_rack->sPATH_INFO);
+    VALUE path = rb_hash_aref(env, rb_str_new_static("PATH_INFO", 9));
     const char *path_ptr = RSTRING_PTR(path);
     size_t path_len = RSTRING_LEN(path);
 
-    for (size_t i = 0; i < path_len; i++) {
-        putc(path_ptr[i], stdout);
-    }
-    putc('\n', stdout);
-
     // Method from request
-    VALUE method = rb_hash_aref(env, rb_str_new2("REQUEST_METHOD"));
+    VALUE method = rb_hash_aref(env, rb_str_new_static("REQUEST_METHOD", 14));
     const char *method_ptr = RSTRING_PTR(method);
     size_t method_len = RSTRING_LEN(method);
+
+    // Debug printing
+    for (size_t i = 0; i < method_len; i++) { putc(method_ptr[i], stdout); }
+    putc(' ', stdout);
+    for (size_t i = 0; i < path_len; i++) { putc(path_ptr[i], stdout); }
+    putc('\n', stdout);
 
     // Ruby hash to hold path parameters
     VALUE path_params = rb_hash_new();
 
     // OK let's dig into the openapi doc
-    const char *openapi_doc = swaggy_rack->openapi_file.data;
-
     struct fy_node *paths = fy_node_by_path(
         fy_document_root(swaggy_rack->yaml_document),
         "/paths", 6,
@@ -185,25 +180,20 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
         rb_raise(rb_eRuntimeError, "Expected paths to be an object");
     }
 
-    // If while looping through paths we find the path we're looking for, we'll
-    // populate this bad boy.
-    struct fy_node *found_openapi_path_spec = NULL;
-
-    void *iter = NULL;
+    void *paths_iter = NULL;
     struct fy_node_pair *path_node_pair;
     struct fy_node *path_node;
 
-    path_node_pair = fy_node_mapping_iterate(paths, &iter);
+    path_node_pair = fy_node_mapping_iterate(paths, &paths_iter);
 
     // Looping through all the openapi doc paths
     while (path_node_pair != NULL) {
         path_node = fy_node_pair_key(path_node_pair);
-        found_openapi_path_spec = fy_node_pair_value(path_node_pair);
 
         const char *key_ptr;
         size_t key_len;
         key_ptr = fy_node_get_scalar(path_node, &key_len);
-        if (key_ptr == NULL) { rb_raise(rb_eRuntimeError, "Failed to get scalar from fy_node"); }
+        if (key_ptr == NULL) { rb_raise(rb_eRuntimeError, "OpenAPI path was not a string"); }
 
         // We'll use this to keep track of whether we've seen a path parameters.
         // This is to facilitate blowing up the path_params hash each iteration,
@@ -213,6 +203,7 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
         const char *api_path_ptr = key_ptr;
         size_t api_path_len = key_len;
 
+        // Now we loop through each character in the API path and the request path.
         size_t api_path_i = 0;
         size_t req_path_i = 0;
         while (api_path_i < api_path_len && req_path_i < path_len) {
@@ -253,22 +244,77 @@ static VALUE swaggy_rack_call(VALUE self, VALUE env) {
                 api_path_i++;
                 req_path_i++;
             } else {
-                found_openapi_path_spec = NULL;
-                goto done;
+                goto not_found;
             }
         }
+
+        // Accept trailing slashes
         while (path_ptr[req_path_i] == '/') {
             req_path_i++;
         }
+
+        // If both paths ended at the same time, we've found a match
         if (api_path_i == api_path_len && req_path_i == path_len) {
-            goto done;
+            goto found;
         }
 
-        if (path_param_added) rb_hash_clear(path_params);
-        path_node_pair = fy_node_mapping_iterate(paths, &iter);
+        // Otherwise, continue on to the next API path
+        if (path_param_added) {
+            rb_hash_clear(path_params);
+            path_param_added = false;
+        }
+        path_node_pair = fy_node_mapping_iterate(paths, &paths_iter);
     }
-done:
-    if (found_openapi_path_spec == NULL) {
+    goto not_found;
+
+found:
+    {
+        // Method "query" in the form of e.g. "/get" or "/post".
+        // This is for querying with libfyaml's fy_node_by_path.
+        char method_query_ptr[12];
+        memset(method_query_ptr, 0, sizeof(method_query_ptr));
+        method_query_ptr[0] = '/';
+        assert(method_len < sizeof(method_query_ptr) - 1);
+        memcpy(method_query_ptr + 1, method_ptr, method_len);
+        for (size_t i = 0; i < method_len + 1; ++i) {
+            method_query_ptr[i + 1] = rb_tolower(method_query_ptr[i + 1]);
+        }
+
+        struct fy_node *methods_node = fy_node_pair_value(path_node_pair);
+        struct fy_node *method_spec = fy_node_by_path(
+            methods_node,
+            method_query_ptr, method_len + 1,
+            FYNWF_FOLLOW
+        );
+        if (fy_node_get_type(method_spec) != FYNT_MAPPING) {
+            goto not_found;
+        }
+
+        struct fy_node *summary_node = fy_node_by_path(
+            method_spec,
+            "/summary", 8,
+            FYNWF_FOLLOW
+        );
+        size_t summary_len;
+        const char *summary = fy_node_get_scalar(summary_node, &summary_len);
+
+        // return [200, {}, [summary]]
+        VALUE status = INT2NUM(200);
+        VALUE headers = rb_hash_new();
+        VALUE body = rb_ary_new();
+        VALUE result = rb_ary_new();
+
+        rb_ary_push(body, rb_str_new_static(summary, summary_len));
+
+        rb_ary_push(result, status);
+        rb_ary_push(result, headers);
+        rb_ary_push(result, body);
+
+        return result;
+    }
+
+not_found:
+    {
         VALUE status = INT2NUM(404);
         VALUE headers = rb_hash_new();
         VALUE body = rb_ary_new();
@@ -282,20 +328,6 @@ done:
 
         return result;
     }
-
-    // return [200, {}, ["Hello World"]]
-    VALUE status = INT2NUM(200);
-    VALUE headers = rb_hash_new();
-    VALUE body = rb_ary_new();
-    VALUE result = rb_ary_new();
-
-    rb_ary_push(body, rb_str_new2("Hello World"));
-
-    rb_ary_push(result, status);
-    rb_ary_push(result, headers);
-    rb_ary_push(result, body);
-
-    return result;
 }
 
 void Init_swaggy() {

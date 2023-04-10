@@ -1,4 +1,9 @@
 module Swaggy
   VERSION: String
   # See the writing guide of rbs: https://github.com/ruby/rbs#guides
+
+  class Rack
+    def initialize: (openapi_file_path: string) -> void
+    def call: (env: Hash[untyped, untyped]) -> [Integer, Hash[untyped, untyped], Array[untyped]]
+  end
 end
